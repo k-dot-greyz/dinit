@@ -71,13 +71,15 @@ PY
 }
 
 state_first_pending() {
-  state_read | /usr/bin/python3 - <<'PY'
+  state_init
+  /usr/bin/python3 - "$(state_file)" <<'PY'
 import json, sys
 order = [
     "preflight", "sudo", "net", "xcode", "brew", "bundle",
     "shell", "git_defaults", "ssh", "runtimes", "gh", "devmaster", "snapshot",
 ]
-d = json.load(sys.stdin)
+with open(sys.argv[1]) as f:
+    d = json.load(f)
 phases = d.get("phases", {})
 for p in order:
     if phases.get(p) != "ok":
@@ -145,10 +147,8 @@ if which("node") and which("rustc") and py_ok:
     phases["runtimes"] = "ok"
 if os.path.isdir(devmaster + "/.git"):
     phases["devmaster"] = "ok"
-if which("gh"):
-    p = subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=8)
-    if p.returncode == 0:
-        phases["gh"] = "ok"
+if which("gh") and ok(["gh", "auth", "status"]):
+    phases["gh"] = "ok"
 
 state["seeded"] = True
 state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
