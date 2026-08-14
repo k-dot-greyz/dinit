@@ -69,7 +69,7 @@ tty_red="$(tty_mkbold 31)"
 tty_bold="$(tty_mkbold 39)"
 tty_reset="$(tty_escape 0)"
 
-# shell_join prints command arguments as a space-separated, shell-escaped string.
+# shell_join prints command arguments as a space-separated display string.
 shell_join() {
   local arg
   printf "%s" "$1"
@@ -85,7 +85,7 @@ chomp() {
   printf "%s" "${1/"$'\n'"/}"
 }
 
-# ohai prints a formatted status message with the provided arguments shell-escaped.
+# ohai prints a formatted status message with the provided arguments joined for display.
 ohai() {
   printf "${tty_blue}==>${tty_bold} %s${tty_reset}\n" "$(shell_join "$@")"
 }
@@ -276,7 +276,7 @@ have_sudo_access() {
   return "${HAVE_SUDO_ACCESS}"
 }
 
-# execute runs a command and aborts with the command's shell-escaped representation if it fails.
+# execute runs a command and aborts with a display representation of the command if it fails.
 execute() {
   if ! "$@"
   then
@@ -406,12 +406,12 @@ get_permission() {
   "${STAT_PRINTF[@]}" "${PERMISSION_FORMAT}" "$1"
 }
 
-# user_only_chmod checks whether a directory's permissions allow access only by its owner.
+# user_only_chmod reports whether a directory's mode does not match 750, 751, 754, or 755.
 user_only_chmod() {
   [[ -d "$1" ]] && [[ "$(get_permission "$1")" != 75[0145] ]]
 }
 
-# exists_but_not_writable determines whether a path exists without read, write, and execute access.
+# exists_but_not_writable determines whether a path exists but lacks one or more of read, write, or execute access.
 exists_but_not_writable() {
   [[ -e "$1" ]] && ! [[ -r "$1" && -w "$1" && -x "$1" ]]
 }

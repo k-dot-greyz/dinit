@@ -76,13 +76,15 @@ PY
 
 # state_first_pending prints the first setup phase that is not marked "ok", following the predefined phase order.
 state_first_pending() {
-  state_read | /usr/bin/python3 - <<'PY'
+  state_init
+  /usr/bin/python3 - "$(state_file)" <<'PY'
 import json, sys
 order = [
     "preflight", "sudo", "net", "xcode", "brew", "bundle",
     "shell", "git_defaults", "ssh", "runtimes", "gh", "devmaster", "snapshot",
 ]
-d = json.load(sys.stdin)
+with open(sys.argv[1]) as f:
+    d = json.load(f)
 phases = d.get("phases", {})
 for p in order:
     if phases.get(p) != "ok":
@@ -101,11 +103,16 @@ state_get_blocker() {
   state_read | /usr/bin/python3 -c "import json,sys; b=json.load(sys.stdin).get('blocker'); print(json.dumps(b) if b else '')"
 }
 
-# seed_state_from_system marks setup phases complete based on detected system capabilities and updates overall state completion. Subsequent calls leave already seeded state unchanged.
+# seed_state_from_system marks pending setup phases complete when their setup invariants are already satisfied. Existing non-pending statuses are never overwritten. Subsequent calls leave already seeded state unchanged.
 seed_state_from_system() {
   DINIT_ROOT="$DINIT_ROOT" ZSHRC="$ZSHRC" DEVMASTER_DIR="$DEVMASTER_DIR" PYTHON_PIN="$PYTHON_PIN" \
     /usr/bin/python3 - "$(state_file)" <<'PY'
-import json, os, shutil, subprocess, sys
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
 from datetime import datetime, timezone
 
 path = sys.argv[1]
@@ -116,32 +123,79 @@ if state.get("seeded"):
 
 def ok(cmd):
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=5).returncode == 0
+        return subprocess.run(cmd, capture_output=True, timeout=8).returncode == 0
     except Exception:
         return False
 
 def which(name):
     return shutil.which(name)
 
+def git_config(key):
+    try:
+        p = subprocess.run(
+            ["git", "config", "--global", key],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return p.stdout.strip() if p.returncode == 0 else ""
+    except Exception:
+        return ""
+
+def file_contains(path, needle):
+    try:
+        return os.path.isfile(path) and needle in open(path).read()
+    except Exception:
+        return False
+
 phases = state.setdefault("phases", {})
 home = os.path.expanduser("~")
+dinit_root = os.environ.get("DINIT_ROOT", home + "/Documents/Code/dinit")
 zshrc = os.environ.get("ZSHRC", home + "/.zshrc")
 devmaster = os.environ.get("DEVMASTER_DIR", home + "/Documents/Code/dev-master")
+code_dir = os.path.dirname(devmaster) or home + "/Documents/Code"
 pin = os.environ.get("PYTHON_PIN", "3.14")
+brewfile = os.path.join(dinit_root, "Brewfile")
+snapshot_dir = os.path.join(dinit_root, "snapshots")
 
-phases["preflight"] = "ok"
-if ok(["git", "--version"]):
-    phases["xcode"] = "ok"
-if os.path.isdir("/opt/homebrew") or os.path.isdir("/usr/local/Homebrew"):
-    phases["brew"] = "ok"
-if which("gh") and which("rg") and which("mise"):
-    phases["bundle"] = "ok"
-if os.path.isfile(zshrc) and "dinit" in open(zshrc).read():
-    phases["shell"] = "ok"
-if ok(["git", "config", "--global", "user.name"]):
-    phases["git_defaults"] = "ok"
-if os.path.isfile(home + "/.ssh/id_ed25519"):
-    phases["ssh"] = "ok"
+def maybe_mark(phase, condition):
+    if phases.get(phase, "pending") != "pending":
+        return
+    if condition:
+        phases[phase] = "ok"
+
+maybe_mark(
+    "preflight",
+    os.path.isdir(code_dir) and os.path.isdir(snapshot_dir),
+)
+maybe_mark(
+    "xcode",
+    ok(["xcode-select", "-p"]) and ok(["git", "--version"]),
+)
+maybe_mark(
+    "brew",
+    which("brew") is not None and ok(["brew", "--prefix"]),
+)
+maybe_mark(
+    "bundle",
+    os.path.isfile(brewfile) and ok(["brew", "bundle", "check", "--file", brewfile]),
+)
+maybe_mark(
+    "shell",
+    file_contains(zshrc, "# >>> dinit >>>")
+    and file_contains(zshrc, "dinit.zsh"),
+)
+maybe_mark(
+    "git_defaults",
+    bool(git_config("user.name"))
+    and git_config("init.defaultBranch") == "main"
+    and git_config("pull.rebase") == "true",
+)
+maybe_mark(
+    "ssh",
+    os.path.isfile(home + "/.ssh/id_ed25519")
+    and file_contains(home + "/.ssh/config", "github.com"),
+)
 py_ok = False
 if which("python3"):
     try:
@@ -149,14 +203,16 @@ if which("python3"):
         py_ok = pin in (p.stdout or p.stderr or "")
     except Exception:
         pass
-if which("node") and which("rustc") and py_ok:
-    phases["runtimes"] = "ok"
-if os.path.isdir(devmaster + "/.git"):
-    phases["devmaster"] = "ok"
-if which("gh"):
-    p = subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=8)
-    if p.returncode == 0:
-        phases["gh"] = "ok"
+maybe_mark(
+    "runtimes",
+    which("rustc") is not None and which("node") is not None and py_ok,
+)
+maybe_mark("devmaster", os.path.isdir(devmaster + "/.git"))
+maybe_mark("gh", which("gh") is not None and ok(["gh", "auth", "status"]))
+maybe_mark(
+    "snapshot",
+    bool(glob.glob(os.path.join(snapshot_dir, "*-state.json"))),
+)
 
 state["seeded"] = True
 state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

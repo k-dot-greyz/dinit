@@ -538,10 +538,10 @@ phase_shell() {
     local pathsrc="${DINIT_ROOT}/shell/dinit-path.zsh"
     local pathsh="${DINIT_ROOT}/shell/dinit-path.sh"
     local src="${DINIT_ROOT}/shell/dinit.zsh"
-    inject_managed_block "$ZSHENV" "export DINIT_ROOT=\"${DINIT_ROOT}\"\n[ -f \"$pathsrc\" ] && source \"$pathsrc\""
-    inject_managed_block "$ZPROFILE" "export DINIT_ROOT=\"${DINIT_ROOT}\"\n[ -f \"$pathsrc\" ] && source \"$pathsrc\""
-    inject_managed_block "$ZSHRC" "export DINIT_ROOT=\"${DINIT_ROOT}\"\n[ -f \"$src\" ] && source \"$src\""
-    inject_managed_block "$PROFILE" "export DINIT_ROOT=\"${DINIT_ROOT}\"\n[ -f \"$pathsh\" ] && . \"$pathsh\""
+    inject_managed_block "$ZSHENV" "export DINIT_ROOT=\"${DINIT_ROOT}\""$'\n'"[ -f \"$pathsrc\" ] && source \"$pathsrc\""
+    inject_managed_block "$ZPROFILE" "export DINIT_ROOT=\"${DINIT_ROOT}\""$'\n'"[ -f \"$pathsrc\" ] && source \"$pathsrc\""
+    inject_managed_block "$ZSHRC" "export DINIT_ROOT=\"${DINIT_ROOT}\""$'\n'"[ -f \"$src\" ] && source \"$src\""
+    inject_managed_block "$PROFILE" "export DINIT_ROOT=\"${DINIT_ROOT}\""$'\n'"[ -f \"$pathsh\" ] && . \"$pathsh\""
     ok "zshenv/zprofile/zshrc/profile hooks"
   else
     warn "PATH hooks skipped (--no-path)"
@@ -667,7 +667,14 @@ phase_runtimes() {
   export MISE_YES=1
 
   if ! command -v rustup >/dev/null 2>&1 && [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    local rustup_init
+    rustup_init="$(mktemp -t dinit-rustup-init)"
+    curl --proto '=https' --tlsv1.2 -fsSL -o "$rustup_init" https://sh.rustup.rs \
+      || write_blocker "runtimes" "rustup installer download failed" "dinit"
+    head -n 1 "$rustup_init" | grep -q '^#!' \
+      || { rm -f "$rustup_init"; write_blocker "runtimes" "rustup installer download was garbage" "dinit"; }
+    /bin/sh "$rustup_init" -y --default-toolchain stable
+    rm -f "$rustup_init"
   fi
   [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
   rustup component add clippy rustfmt 2>/dev/null || true
@@ -689,7 +696,7 @@ phase_runtimes() {
 
 gh_has_scope() {
   local scope="$1"
-  gh auth status 2>&1 | grep -qE "(Token scopes:|${scope})"
+  gh auth status 2>&1 | sed -n 's/.*Token scopes: //p' | grep -q "'${scope}'"
 }
 
 git_scrub_bad_https_override() {
@@ -817,13 +824,13 @@ phase_devmaster() {
 write_snapshot() {
   hydrate_path
   mkdir -p "$SNAPSHOT_DIR"
-  local stamp json latest
+  local stamp snap latest
   stamp="$(date +%Y%m%dT%H%M%S)"
-  json="${SNAPSHOT_DIR}/${stamp}.json"
+  snap="${SNAPSHOT_DIR}/${stamp}-state.json"
   latest="${SNAPSHOT_DIR}/latest.json"
-  cp "$(state_file)" "${SNAPSHOT_DIR}/${stamp}-state.json" 2>/dev/null || true
-  ln -sfn "$(basename "$json")" "$latest" 2>/dev/null || true
-  ok "state → ${SNAPSHOT_DIR}/${stamp}-state.json"
+  cp "$(state_file)" "$snap" 2>/dev/null || true
+  ln -sfn "$(basename "$snap")" "$latest" 2>/dev/null || true
+  ok "state → $snap"
 }
 
 resume_hydrate() {
