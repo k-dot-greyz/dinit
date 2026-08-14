@@ -45,6 +45,7 @@ state_phase_status() {
   state_read | /usr/bin/python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('phases',{}).get(sys.argv[1],'pending'))" "$phase"
 }
 
+# state_set_phase updates a phase status in the state file, records relevant blocker information, and recalculates overall completion.
 state_set_phase() {
   local phase="$1"
   local phase_status="$2"
@@ -70,6 +71,7 @@ with open(path, "w") as f:
 PY
 }
 
+# state_first_pending prints the first setup phase whose status is not `ok`.
 state_first_pending() {
   state_init
   /usr/bin/python3 - "$(state_file)" <<'PY'
@@ -96,6 +98,7 @@ state_get_blocker() {
   state_read | /usr/bin/python3 -c "import json,sys; b=json.load(sys.stdin).get('blocker'); print(json.dumps(b) if b else '')"
 }
 
+# seed_state_from_system seeds uninitialized state from detected system conditions and updates its completion status.
 seed_state_from_system() {
   DINIT_ROOT="$DINIT_ROOT" ZSHRC="$ZSHRC" DEVMASTER_DIR="$DEVMASTER_DIR" PYTHON_PIN="$PYTHON_PIN" \
     /usr/bin/python3 - "$(state_file)" <<'PY'
