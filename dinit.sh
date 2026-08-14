@@ -90,6 +90,7 @@ warn()  { print -P "  %F{yellow}skip%f $1" }
 # info prints an informational message.
 info()  { print -P "  $1" }
 
+# print_blocker_footer prints a blocker message and the command to retry.
 print_blocker_footer() {
   local msg="$1"
   local next="${2:-dinit}"
@@ -97,6 +98,7 @@ print_blocker_footer() {
   print -P "%F{cyan}next:%f $next"
 }
 
+# write_blocker records a blocked phase, displays recovery instructions, and exits.
 write_blocker() {
   local phase="$1"
   local msg="$2"
@@ -106,10 +108,12 @@ write_blocker() {
   exit 1
 }
 
+# fail records the current phase as blocked and exits.
 fail() {
   write_blocker "${DINIT_CURRENT_PHASE:-unknown}" "$1" "${2:-dinit}"
 }
 
+# run_phase executes a pending hydration phase and marks it successful.
 run_phase() {
   local name="$1"
   shift
@@ -121,6 +125,7 @@ run_phase() {
   state_set_phase "$name" "ok"
 }
 
+# need_tty requires execution from an interactive terminal.
 need_tty() {
   if [[ ! -t 0 || ! -t 1 ]]; then
     print -u2 "dinit wants a real terminal (sudo + brew prompts)."
@@ -129,11 +134,13 @@ need_tty() {
   fi
 }
 
+# ensure_file creates an empty file when the specified file does not exist.
 ensure_file() {
   local f="$1"
   [[ -f "$f" ]] || : > "$f"
 }
 
+# inject_managed_block inserts or replaces a managed block in a file.
 inject_managed_block() {
   local file="$1"
   local body="$2"
@@ -157,18 +164,21 @@ open(path, "w").write(text)
 PY
 }
 
+# brew_bin prints the path to the installed Homebrew executable.
 brew_bin() {
   if [[ -x /opt/homebrew/bin/brew ]]; then print /opt/homebrew/bin/brew
   elif [[ -x /usr/local/bin/brew ]]; then print /usr/local/bin/brew
   else return 1; fi
 }
 
+# load_brew loads Homebrew into the current shell environment.
 load_brew() {
   local b
   b="$(brew_bin)" || return 1
   eval "$("$b" shellenv)"
 }
 
+# hydrate_path refreshes the shell environment and executable search path.
 hydrate_path() {
   [[ "$ADD_PATH" -eq 1 ]] || return 0
   local pathfile="${DINIT_ROOT}/shell/dinit-path.zsh"
@@ -182,6 +192,7 @@ hydrate_path() {
   rehash 2>/dev/null || hash -r 2>/dev/null || true
 }
 
+# print_env prints shell commands for the current dinit environment.
 print_env() {
   hydrate_path
   print -r -- "export PATH=\"${PATH}\""
@@ -190,6 +201,7 @@ print_env() {
   [[ -n "${MISE_YES:-}" ]] && print -r -- "export MISE_YES=\"${MISE_YES}\""
 }
 
+# stale_path_detect detects a shell session with an outdated executable search path.
 stale_path_detect() {
   hydrate_path
   if command -v gh >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
@@ -203,6 +215,7 @@ stale_path_detect() {
   return 0
 }
 
+# doh_a resolves a hostname to an IPv4 address through DNS over HTTPS.
 doh_a() {
   local name="$1" json=""
   json="$(curl -fsSL --connect-timeout 8 --resolve cloudflare-dns.com:443:1.1.1.1 \
@@ -221,10 +234,12 @@ else: sys.exit(1)
 '
 }
 
+# curl_to downloads a URL to a destination file with retries.
 curl_to() {
   curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 12 --max-time 60 -o "$1" "$2"
 }
 
+# curl_to_resolved downloads a URL using an address resolved through DNS over HTTPS.
 curl_to_resolved() {
   local dest="$1" url="$2" host="${${url#https://}%%/*}" ip
   ip="$(doh_a "$host")" || return 1
@@ -233,12 +248,14 @@ curl_to_resolved() {
     --resolve "${host}:443:${ip}" -o "$dest" "$url"
 }
 
+# host_resolves checks whether a host resolves or responds over HTTPS.
 host_resolves() {
   local host="$1"
   dscacheutil -q host -a name "$host" 2>/dev/null | grep -q '^ip_address:' \
     || curl -sI --connect-timeout 5 --max-time 8 "https://${host}" >/dev/null 2>&1
 }
 
+# primary_network_service identifies the active macOS network service.
 primary_network_service() {
   local iface svc
   iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
@@ -257,12 +274,14 @@ primary_network_service() {
   print -r -- "$svc"
 }
 
+# hotspot_dns detects DNS servers commonly assigned by mobile hotspots.
 hotspot_dns() {
   local ns
   ns="$(scutil --dns 2>/dev/null | awk '/nameserver\[0\]/{print $3; exit}')"
   [[ "$ns" == 192.168.43.* || "$ns" == 172.20.10.* || "$ns" == 192.168.137.* ]]
 }
 
+# infer_git_from_gh configures the global Git identity from the authenticated GitHub account.
 infer_git_from_gh() {
   hydrate_path
   load_brew >/dev/null 2>&1 || true
@@ -281,6 +300,7 @@ infer_git_from_gh() {
 
 DINIT_SITREP_MISSING=0
 
+# ping_tool reports whether a command is available and prints its version.
 ping_tool() {
   local cmd="$1"; shift
   local -a args=("$@")
@@ -295,6 +315,7 @@ ping_tool() {
   printf "  \033[32mok\033[0m    %-10s  %s  (%s)\n" "$cmd" "$ver" "$bin"
 }
 
+# sitrep_compact reports the status of core development tools.
 sitrep_compact() {
   ping_tool brew --version
   ping_tool git --version
@@ -315,6 +336,7 @@ sitrep_compact() {
   fi
 }
 
+# sitrep_verbose reports the status of additional development tools.
 sitrep_verbose() {
   ping_tool git-lfs --version
   ping_tool jq --version
@@ -327,6 +349,7 @@ sitrep_verbose() {
   ping_tool ssh -V
 }
 
+# sitrep reports system, tool, hydration, and blocker status.
 sitrep() {
   hydrate_path
   DINIT_SITREP_MISSING=0
@@ -352,6 +375,7 @@ sitrep() {
   return $DINIT_SITREP_MISSING
 }
 
+# phase_sudo establishes and maintains the sudo credential cache.
 phase_sudo() {
   phase "sudo (once)"
   if sudo -n true 2>/dev/null; then ok "sudo warm"
@@ -365,6 +389,7 @@ phase_sudo() {
   fi
 }
 
+# phase_preflight creates the development workspace and snapshot directory.
 phase_preflight() {
   phase "preflight"
   info "macOS $(sw_vers -productVersion)  arch=$(uname -m)  user=$USER"
@@ -372,6 +397,7 @@ phase_preflight() {
   ok "workspace $CODE_DIR"
 }
 
+# phase_net checks network connectivity and optionally repairs hotspot DNS.
 phase_net() {
   phase "network"
   local ns
@@ -388,6 +414,7 @@ phase_net() {
   host_resolves github.com && ok "github.com" || warn "github.com unreachable"
 }
 
+# phase_fix_dns replaces the active network service's DNS servers with public resolvers.
 phase_fix_dns() {
   local svc
   svc="$(primary_network_service)" || write_blocker "net" "could not detect network service" "dinit"
@@ -399,6 +426,7 @@ phase_fix_dns() {
   ok "DNS updated"
 }
 
+# phase_xcode ensures the macOS Command Line Tools and Git are available.
 phase_xcode() {
   phase "Xcode / CLT"
   if ! xcode-select -p >/dev/null 2>&1; then
@@ -414,6 +442,7 @@ phase_xcode() {
   ok "$(git --version)"
 }
 
+# fetch_homebrew_installer obtains a valid Homebrew installer script.
 fetch_homebrew_installer() {
   local dest="$1"
   local vendored="${DINIT_ROOT}/vendor/homebrew-install.sh"
@@ -431,6 +460,7 @@ fetch_homebrew_installer() {
   return 1
 }
 
+# phase_brew installs or loads Homebrew and refreshes its environment.
 phase_brew() {
   phase "Homebrew"
   if brew_bin >/dev/null; then
@@ -456,6 +486,7 @@ phase_brew() {
   hydrate_path
 }
 
+# phase_bundle installs the tools declared in the repository's Brewfile.
 phase_bundle() {
   phase "brew bundle"
   load_brew
@@ -473,6 +504,7 @@ phase_bundle() {
   ok "bundle done"
 }
 
+# phase_shell installs managed shell environment and startup hooks.
 phase_shell() {
   phase "shell hooks"
   local pathsrc="${DINIT_ROOT}/shell/dinit-path.zsh"
@@ -494,6 +526,7 @@ phase_shell() {
   hydrate_path
 }
 
+# phase_git_defaults configures global Git defaults and identity.
 phase_git_defaults() {
   phase "git defaults"
   git config --global init.defaultBranch main
@@ -526,6 +559,7 @@ phase_git_defaults() {
   ok "user.name=$(git config --global user.name 2>/dev/null || echo '?')"
 }
 
+# phase_ssh creates and configures the GitHub Ed25519 SSH key.
 phase_ssh() {
   phase "ssh key"
   mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
@@ -547,11 +581,13 @@ EOF
   ssh-add --apple-use-keychain "$key" 2>/dev/null || ssh-add "$key" 2>/dev/null || true
 }
 
+# python314_bin prints the path to the mise-managed Python interpreter.
 python314_bin() {
   hydrate_path
   command -v mise >/dev/null && mise which python 2>/dev/null
 }
 
+# link_python_shims links the pinned Python interpreter into the user's local bin directory.
 link_python_shims() {
   local bin
   bin="$(python314_bin)" || return 1
@@ -561,6 +597,7 @@ link_python_shims() {
   ln -sfn "$bin" "$HOME/.local/bin/python3.14"
 }
 
+# uninstall_old_mise_pythons removes mise-managed Python versions other than the pinned version.
 uninstall_old_mise_pythons() {
   command -v mise >/dev/null || return 0
   local line ver
@@ -572,6 +609,7 @@ uninstall_old_mise_pythons() {
   done
 }
 
+# purge_old_python removes older Python installations and links the pinned interpreter system-wide.
 purge_old_python() {
   load_brew
   local f
@@ -591,6 +629,7 @@ purge_old_python() {
   ok "/usr/local/bin/python3 → 3.14"
 }
 
+# pin_python installs and selects the configured Python version.
 pin_python() {
   phase "python ${PYTHON_PIN}"
   export MISE_YES=1
@@ -606,6 +645,7 @@ pin_python() {
   [[ "$PURGE_OLD_PYTHON" -eq 1 ]] && purge_old_python
 }
 
+# phase_runtimes installs and configures Rust, Python, Node, pnpm, and Bun.
 phase_runtimes() {
   phase "runtimes"
   load_brew
@@ -639,11 +679,13 @@ phase_runtimes() {
   command -v bun >/dev/null && ok "bun $(bun -v)" || warn "bun missing"
 }
 
+# gh_has_scope checks whether the authenticated GitHub token includes a requested scope.
 gh_has_scope() {
   local scope="$1"
   gh auth status 2>&1 | sed -n 's/.*Token scopes: //p' | grep -q "'${scope}'"
 }
 
+# git_scrub_bad_https_override removes Git URL rules that force GitHub SSH URLs to HTTPS.
 git_scrub_bad_https_override() {
   local key val
   while IFS= read -r key val; do
@@ -656,6 +698,7 @@ git_scrub_bad_https_override() {
   done < <(git config --global --get-regexp '^url\..*\.insteadOf$' 2>/dev/null || true)
 }
 
+# github_auth_browser authenticates GitHub through the browser and configures Git and SSH integration.
 github_auth_browser() {
   phase "GitHub auth (browser → keychain)"
   load_brew
@@ -712,11 +755,13 @@ github_auth_browser() {
   print -P "\n%F{green}Auth wired.%f Submodules and git fetch use SSH + keychain — no password prompts."
 }
 
+# phase_gh performs GitHub authentication unless authentication was skipped.
 phase_gh() {
   [[ "$SKIP_AUTH" -eq 1 ]] && { warn "gh auth skipped"; return 0; }
   github_auth_browser
 }
 
+# configure_devmaster_git configures the dev-master repository to use authenticated SSH remotes.
 configure_devmaster_git() {
   [[ -d "$DEVMASTER_DIR/.git" ]] || return 0
   hydrate_path
@@ -744,6 +789,7 @@ configure_devmaster_git() {
   fi
 }
 
+# phase_devmaster clones or updates the dev-master repository.
 phase_devmaster() {
   phase "clone dev-master"
   [[ "$CLONE_REPO" -eq 1 ]] || { warn "clone skipped (--no-clone)"; return 0; }
@@ -766,6 +812,7 @@ phase_devmaster() {
   configure_devmaster_git
 }
 
+# write_snapshot saves the current state and updates the latest snapshot link.
 write_snapshot() {
   hydrate_path
   mkdir -p "$SNAPSHOT_DIR"
@@ -778,6 +825,7 @@ write_snapshot() {
   ok "state → $snap"
 }
 
+# resume_hydrate resumes hydration from the first incomplete phase.
 resume_hydrate() {
   need_tty
   local start
@@ -818,6 +866,7 @@ resume_hydrate() {
   fi
 }
 
+# in_devmaster_tree checks whether the current directory is within the dev-master repository.
 in_devmaster_tree() {
   local cwd="${PWD:A}"
   local root="${DEVMASTER_DIR:A}"
@@ -825,11 +874,13 @@ in_devmaster_tree() {
   [[ "$cwd" == "$root" || "$cwd" == "$root"/* ]]
 }
 
+# should_run_territory checks whether the completed setup should hand off to the territory ritual.
 should_run_territory() {
   [[ "$(state_is_complete)" == "true" ]] || return 1
   in_devmaster_tree
 }
 
+# run_territory_ritual executes the dev-master repository's setup ritual.
 run_territory_ritual() {
   local ritual="${DEVMASTER_DIR}/dinit.sh"
   [[ -f "$ritual" ]] || {
@@ -840,12 +891,14 @@ run_territory_ritual() {
   exec bash "$ritual"
 }
 
+# maybe_handoff_territory hands off to the dev-master ritual when it is available.
 maybe_handoff_territory() {
   [[ -d "$DEVMASTER_DIR/.git" ]] || return 0
   [[ -f "${DEVMASTER_DIR}/dinit.sh" ]] || return 0
   run_territory_ritual
 }
 
+# main parses the selected mode and runs the requested setup workflow.
 main() {
   state_init
   seed_state_from_system
