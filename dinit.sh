@@ -74,12 +74,9 @@ for arg in "$@"; do
       ;;
     --*) print -u2 "unknown flag: $arg (try --help)"; exit 2 ;;
     *)
-      if [[ "$arg" != "" && "$RESUME_MODE" -eq 1 && $# -eq 1 ]]; then
-        : # bare `dinit` with no subcommand = resume
-      elif [[ "$DOCTOR" -eq 0 && "$ENV_ONLY" -eq 0 ]]; then
-        print -u2 "unknown: $arg (try: dinit | dinit auth | dinit env | dinit sitrep | dinit clone)"
-        exit 2
-      fi
+      [[ -z "$arg" ]] && continue
+      print -u2 "unknown: $arg (try: dinit | dinit auth | dinit env | dinit sitrep | dinit clone)"
+      exit 2
       ;;
   esac
 done
@@ -89,60 +86,6 @@ autoload -Uz colors && colors
 phase() { print -P "\n%F{cyan}==>%f %B$1%b" }
 ok()    { print -P "  %F{green}ok%f  $1" }
 warn()  { print -P "  %F{yellow}skip%f $1" }
-# info prints an informational message.
-# print_blocker_footer prints a blocker message and the command to retry.
-# write_blocker records a blocked phase, displays recovery instructions, and exits.
-# fail records the current phase as blocked and exits.
-# run_phase executes a pending hydration phase and marks it successful.
-# need_tty requires execution from an interactive terminal.
-# ensure_file creates an empty file when the specified file does not exist.
-# inject_managed_block inserts or replaces a managed block in a file.
-# brew_bin prints the path to the installed Homebrew executable.
-# load_brew loads Homebrew into the current shell environment.
-# hydrate_path refreshes the shell environment and executable search path.
-# print_env prints shell commands for the current dinit environment.
-# stale_path_detect detects a shell session with an outdated executable search path.
-# doh_a resolves a hostname to an IPv4 address through DNS over HTTPS.
-# curl_to downloads a URL to a destination file with retries.
-# curl_to_resolved downloads a URL using an address resolved through DNS over HTTPS.
-# host_resolves checks whether a host resolves or responds over HTTPS.
-# primary_network_service identifies the active macOS network service.
-# hotspot_dns detects DNS servers commonly assigned by mobile hotspots.
-# infer_git_from_gh configures the global Git identity from the authenticated GitHub account.
-# ping_tool reports whether a command is available and prints its version.
-# sitrep_compact reports the status of core development tools.
-# sitrep_verbose reports the status of additional development tools.
-# sitrep reports system, tool, hydration, and blocker status.
-# phase_sudo establishes and maintains the sudo credential cache.
-# phase_preflight creates the development workspace and snapshot directory.
-# phase_net checks network connectivity and optionally repairs hotspot DNS.
-# phase_fix_dns replaces the active network service's DNS servers with public resolvers.
-# phase_xcode ensures the macOS Command Line Tools and Git are available.
-# fetch_homebrew_installer obtains a valid Homebrew installer script.
-# phase_brew installs or loads Homebrew and refreshes its environment.
-# phase_bundle installs the tools declared in the repository's Brewfile.
-# phase_shell installs managed shell environment and startup hooks.
-# phase_git_defaults configures global Git defaults and identity.
-# phase_ssh creates and configures the GitHub Ed25519 SSH key.
-# python314_bin prints the path to the mise-managed Python interpreter.
-# link_python_shims links the pinned Python interpreter into the user's local bin directory.
-# uninstall_old_mise_pythons removes mise-managed Python versions other than the pinned version.
-# purge_old_python removes older Python installations and links the pinned interpreter system-wide.
-# pin_python installs and selects the configured Python version.
-# phase_runtimes installs and configures Rust, Python, Node, pnpm, and Bun.
-# gh_has_scope checks whether the authenticated GitHub token includes a requested scope.
-# git_scrub_bad_https_override removes Git URL rules that force GitHub SSH URLs to HTTPS.
-# github_auth_browser authenticates GitHub through the browser and configures Git and SSH integration.
-# phase_gh performs GitHub authentication unless authentication was skipped.
-# configure_devmaster_git configures the dev-master repository to use authenticated SSH remotes.
-# phase_devmaster clones or updates the dev-master repository.
-# write_snapshot saves the current state and updates the latest snapshot link.
-# resume_hydrate resumes hydration from the first incomplete phase.
-# in_devmaster_tree checks whether the current directory is within the dev-master repository.
-# should_run_territory checks whether the completed setup should hand off to the territory ritual.
-# run_territory_ritual executes the dev-master repository's setup ritual.
-# maybe_handoff_territory hands off to the dev-master ritual when it is available.
-# main parses the selected mode and runs the requested setup workflow.
 info()  { print -P "  $1" }
 
 print_blocker_footer() {
