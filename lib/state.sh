@@ -1,51 +1,61 @@
 # shellcheck shell=bash
-# state_file prints the path to the persistent state file.
+# state helpers — catalog-backed JSON state for dinit.
 
+: "${DINIT_LIB:=${DINIT_ROOT}/lib}"
+DINIT_STATE_PY="${DINIT_LIB}/dinit_state.py"
+
+# state_file prints the path to the persistent state file.
 state_file() {
   print -r -- "${DINIT_ROOT}/state.json"
 }
 
+_state_py() {
+  /usr/bin/python3 "$DINIT_STATE_PY" "$@"
+}
+
 # state_init creates the dinit state directory and initializes its state file when absent.
 state_init() {
-  local sf
-  sf="$(state_file)"
   mkdir -p "${DINIT_ROOT}"
-  if [[ ! -f "$sf" ]]; then
-    DINIT_ROOT="$DINIT_ROOT" /usr/bin/python3 - "$sf" <<'PY'
-import json, os, sys
-from datetime import datetime, timezone
-root = os.environ["DINIT_ROOT"]
-phases = [
-    "preflight", "sudo", "net", "xcode", "brew", "bundle",
-    "shell", "git_defaults", "ssh", "runtimes", "gh", "devmaster", "snapshot",
-]
-state = {
-    "schema": "dinit.state.v1",
-    "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "complete": False,
-    "phases": {p: "pending" for p in phases},
-    "blocker": None,
-}
-with open(sys.argv[1], "w") as f:
-    json.dump(state, f, indent=2)
-    f.write("\n")
-PY
-  fi
+  _state_py init "$(state_file)"
 }
 
 # state_read initializes the state file if needed and prints its contents as compact JSON.
 state_read() {
   state_init
-  /usr/bin/python3 - "$(state_file)" <<'PY'
-import json, sys
-print(json.dumps(json.load(open(sys.argv[1]))))
-PY
+  _state_py dump "$(state_file)"
 }
 
 # state_phase_status prints the current status of a setup phase, defaulting to `pending` when no status is recorded.
 state_phase_status() {
   local phase="$1"
-  state_read | /usr/bin/python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('phases',{}).get(sys.argv[1],'pending'))" "$phase"
+  state_init
+  _state_py get "$(state_file)" "$phase"
+}
+
+# state_phase_kind prints the catalog kind for a phase (required, session, human).
+state_phase_kind() {
+  _state_py kind "$1"
+}
+
+# state_phase_skippable prints true when a phase may be persisted as skipped.
+state_phase_skippable() {
+  _state_py skippable "$1"
+}
+
+# state_phase_apply prints the shell function that applies a phase.
+state_phase_apply() {
+  _state_py apply "$1"
+}
+
+# state_phase_ids prints catalog phase ids in order, one per line.
+state_phase_ids() {
+  _state_py ids
+}
+
+# state_catalog_table prints id, kind, status, and retry class for each phase.
+state_catalog_table() {
+  state_init
+  _state_py table "$(state_file)"
 }
 
 # state_set_phase updates a phase status, records relevant blocker details, and recalculates overall completion.
@@ -54,58 +64,48 @@ state_set_phase() {
   local phase_status="$2"
   local blocker_msg="${3:-}"
   local next_cmd="${4:-dinit}"
-  DINIT_ROOT="$DINIT_ROOT" /usr/bin/python3 - "$(state_file)" "$phase" "$phase_status" "$blocker_msg" "$next_cmd" <<'PY'
-import json, sys
-from datetime import datetime, timezone
-path, phase, status, msg, nxt = sys.argv[1:6]
-with open(path) as f:
-    state = json.load(f)
-state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-state.setdefault("phases", {})[phase] = status
-if status == "ok":
-    state["blocker"] = None
-elif status in ("failed", "blocked") and msg:
-    state["blocker"] = {"phase": phase, "message": msg, "next": nxt}
-done = all(v == "ok" for v in state["phases"].values())
-state["complete"] = done
-with open(path, "w") as f:
-    json.dump(state, f, indent=2)
-    f.write("\n")
-PY
+  state_init
+  _state_py set "$(state_file)" "$phase" "$phase_status" "$blocker_msg" "$next_cmd"
 }
 
-# state_first_pending prints the first setup phase that is not marked "ok", following the predefined phase order.
+# state_skip_phase persists a skippable phase as skipped. Non-skippable phases fail.
+state_skip_phase() {
+  local phase="$1"
+  local msg="${2:-skipped}"
+  local next_cmd="${3:-dinit}"
+  state_init
+  _state_py skip "$(state_file)" "$phase" "$msg" "$next_cmd"
+}
+
+# state_reset_phase sets a phase back to pending so the next resume retries it.
+state_reset_phase() {
+  local phase="$1"
+  state_init
+  _state_py reset "$(state_file)" "$phase"
+}
+
+# state_first_pending prints the first non-session phase that is not ok or skipped.
 state_first_pending() {
   state_init
-  /usr/bin/python3 - "$(state_file)" <<'PY'
-import json, sys
-order = [
-    "preflight", "sudo", "net", "xcode", "brew", "bundle",
-    "shell", "git_defaults", "ssh", "runtimes", "gh", "devmaster", "snapshot",
-]
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-phases = d.get("phases", {})
-for p in order:
-    if phases.get(p) != "ok":
-        print(p)
-        break
-PY
+  _state_py first-pending "$(state_file)"
 }
 
-# state_is_complete prints whether all setup phases are complete.
+# state_is_complete prints whether all required and human phases are ok or skipped.
 state_is_complete() {
-  state_read | /usr/bin/python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('complete') else 'false')"
+  state_init
+  _state_py is-complete "$(state_file)"
 }
 
 # state_get_blocker prints the current state blocker as JSON, or an empty string when no blocker is set.
 state_get_blocker() {
-  state_read | /usr/bin/python3 -c "import json,sys; b=json.load(sys.stdin).get('blocker'); print(json.dumps(b) if b else '')"
+  state_init
+  _state_py blocker "$(state_file)"
 }
 
 # seed_state_from_system marks pending setup phases complete when their setup invariants are already satisfied. Existing non-pending statuses are never overwritten. Subsequent calls leave already seeded state unchanged.
 seed_state_from_system() {
-  DINIT_ROOT="$DINIT_ROOT" ZSHRC="$ZSHRC" DEVMASTER_DIR="$DEVMASTER_DIR" PYTHON_PIN="$PYTHON_PIN" \
+  state_init
+  DINIT_ROOT="$DINIT_ROOT" DINIT_LIB="$DINIT_LIB" ZSHRC="$ZSHRC" DEVMASTER_DIR="$DEVMASTER_DIR" PYTHON_PIN="$PYTHON_PIN" \
     /usr/bin/python3 - "$(state_file)" <<'PY'
 import glob
 import json
@@ -114,6 +114,9 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
+
+sys.path.insert(0, os.environ["DINIT_LIB"])
+from dinit_state import compute_complete
 
 path = sys.argv[1]
 with open(path) as f:
@@ -155,7 +158,8 @@ zshrc = os.environ.get("ZSHRC", home + "/.zshrc")
 devmaster = os.environ.get("DEVMASTER_DIR", home + "/Documents/Code/dev-master")
 code_dir = os.path.dirname(devmaster) or home + "/Documents/Code"
 pin = os.environ.get("PYTHON_PIN", "3.14")
-brewfile = os.path.join(dinit_root, "Brewfile")
+dinit_home = os.environ.get("DINIT_HOME") or os.path.dirname(os.environ.get("DINIT_LIB", dinit_root))
+brewfile = os.path.join(dinit_home, "Brewfile")
 snapshot_dir = os.path.join(dinit_root, "snapshots")
 
 def maybe_mark(phase, condition):
@@ -216,7 +220,7 @@ maybe_mark(
 
 state["seeded"] = True
 state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-state["complete"] = all(v == "ok" for v in phases.values())
+state["complete"] = compute_complete(phases)
 with open(path, "w") as f:
     json.dump(state, f, indent=2)
     f.write("\n")

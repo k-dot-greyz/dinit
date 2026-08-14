@@ -17,4 +17,6 @@ jobs:
       - name: Run tests
         run: |
           ./tests/test_seed_state.sh
+          ./tests/test_state_algebra.sh
+          ./tests/test_retry.sh
           ./tests/test_arg_parsing.sh
