@@ -6,6 +6,7 @@
 
 set -u
 
+# abort prints messages to standard error and exits with a failure status.
 abort() {
   printf "%s\n" "$@" >&2
   exit 1
@@ -54,10 +55,13 @@ fi
 # string formatters
 if [[ -t 1 ]]
 then
-  tty_escape() { printf "\033[%sm" "$1"; }
+  # tty_escape formats an ANSI terminal escape sequence for the specified style.
+tty_escape() { printf "\033[%sm" "$1"; }
 else
-  tty_escape() { :; }
+  # tty_escape performs no operation.
+tty_escape() { :; }
 fi
+# tty_mkbold formats a terminal escape sequence for bold text using the specified color code.
 tty_mkbold() { tty_escape "1;$1"; }
 tty_underline="$(tty_escape "4;39")"
 tty_blue="$(tty_mkbold 34)"
@@ -65,6 +69,7 @@ tty_red="$(tty_mkbold 31)"
 tty_bold="$(tty_mkbold 39)"
 tty_reset="$(tty_escape 0)"
 
+# shell_join prints command arguments as a space-separated display string.
 shell_join() {
   local arg
   printf "%s" "$1"
@@ -75,18 +80,22 @@ shell_join() {
   done
 }
 
+# chomp removes the first newline character from the supplied string and writes the result to standard output.
 chomp() {
   printf "%s" "${1/"$'\n'"/}"
 }
 
+# ohai prints a formatted status message with the provided arguments joined for display.
 ohai() {
   printf "${tty_blue}==>${tty_bold} %s${tty_reset}\n" "$(shell_join "$@")"
 }
 
+# warn displays a warning message on standard error.
 warn() {
   printf "${tty_red}Warning${tty_reset}: %s\n" "$(chomp "$1")" >&2
 }
 
+# usage prints the Homebrew installer usage message and exits with the specified status code.
 usage() {
   cat <<EOS
 Homebrew Installer
@@ -232,6 +241,7 @@ then
   ADD_PATHS_D=1
 fi
 
+# have_sudo_access determines whether sudo can execute the required privileged commands and aborts on macOS when access is unavailable.
 have_sudo_access() {
   if [[ ! -x "/usr/bin/sudo" ]]
   then
@@ -266,6 +276,7 @@ have_sudo_access() {
   return "${HAVE_SUDO_ACCESS}"
 }
 
+# execute runs a command and aborts with a display representation of the command if it fails.
 execute() {
   if ! "$@"
   then
@@ -273,6 +284,7 @@ execute() {
   fi
 }
 
+# retry retries a command with exponentially increasing delays and aborts if every attempt fails.
 retry() {
   local tries="$1" n="$1" pause=2
   shift
@@ -292,6 +304,7 @@ retry() {
   fi
 }
 
+# execute_sudo runs a command with sudo when required and available, otherwise executes it directly.
 execute_sudo() {
   local -a args=("$@")
   if [[ "${EUID:-${UID}}" != "0" ]] && have_sudo_access
@@ -308,6 +321,7 @@ execute_sudo() {
   fi
 }
 
+# getc reads a single character from standard input without echoing it.
 getc() {
   local save_state
   save_state="$(/bin/stty -g)"
@@ -316,6 +330,7 @@ getc() {
   /bin/stty "${save_state}"
 }
 
+# ring_bell emits an audible bell when standard output is connected to a terminal.
 ring_bell() {
   # Use the shell's audible bell.
   if [[ -t 1 ]]
@@ -324,6 +339,7 @@ ring_bell() {
   fi
 }
 
+# wait_for_user waits for the user to press Return or Enter; exits with status 1 when another key is pressed.
 wait_for_user() {
   local c
   echo
@@ -336,6 +352,7 @@ wait_for_user() {
   fi
 }
 
+# major_minor extracts the major and minor components from a dotted version string.
 major_minor() {
   echo "${1%%.*}.$(
     x="${1#*.}"
@@ -343,16 +360,20 @@ major_minor() {
   )"
 }
 
+# version_gt compares two dotted version strings and reports whether the first is greater than the second.
 version_gt() {
   [[ "${1%.*}" -gt "${2%.*}" ]] || [[ "${1%.*}" -eq "${2%.*}" && "${1#*.}" -gt "${2#*.}" ]]
 }
+# version_ge compares two dot-separated version numbers and succeeds when the first version is greater than or equal to the second.
 version_ge() {
   [[ "${1%.*}" -gt "${2%.*}" ]] || [[ "${1%.*}" -eq "${2%.*}" && "${1#*.}" -ge "${2#*.}" ]]
 }
+# version_lt compares two dot-separated version numbers and returns success when the first is lower than the second.
 version_lt() {
   [[ "${1%.*}" -lt "${2%.*}" ]] || [[ "${1%.*}" -eq "${2%.*}" && "${1#*.}" -lt "${2#*.}" ]]
 }
 
+# check_run_command_as_root allows root execution in supported containerized or CI environments and aborts in other cases.
 check_run_command_as_root() {
   [[ "${EUID:-${UID}}" == "0" ]] || return
 
@@ -364,6 +385,7 @@ check_run_command_as_root() {
   abort "Don't run this as root!"
 }
 
+# should_install_command_line_tools determines whether macOS Command Line Tools need to be installed.
 should_install_command_line_tools() {
   if [[ -n "${HOMEBREW_ON_LINUX-}" ]]
   then
@@ -379,35 +401,42 @@ should_install_command_line_tools() {
   fi
 }
 
+# get_permission reports the permission mode of the specified path.
 get_permission() {
   "${STAT_PRINTF[@]}" "${PERMISSION_FORMAT}" "$1"
 }
 
+# user_only_chmod reports whether a directory's mode does not match 750, 751, 754, or 755.
 user_only_chmod() {
   [[ -d "$1" ]] && [[ "$(get_permission "$1")" != 75[0145] ]]
 }
 
+# exists_but_not_writable determines whether a path exists but lacks one or more of read, write, or execute access.
 exists_but_not_writable() {
   [[ -e "$1" ]] && ! [[ -r "$1" && -w "$1" && -x "$1" ]]
 }
 
+# get_owner reports the numeric user ID that owns the specified file or directory.
 get_owner() {
   "${STAT_PRINTF[@]}" "%u" "$1"
 }
 
+# file_not_owned determines whether the specified file is owned by the current user.
 file_not_owned() {
   [[ "$(get_owner "$1")" != "$(id -u)" ]]
 }
 
+# get_group outputs the numeric group ID of the specified file.
 get_group() {
   "${STAT_PRINTF[@]}" "%g" "$1"
 }
 
+# file_not_grpowned reports whether a file is not owned by any group associated with the current user.
 file_not_grpowned() {
   [[ " $(id -G "${USER}") " != *" $(get_group "$1") "* ]]
 }
 
-# Please sync with 'test_ruby()' in 'Library/Homebrew/utils/ruby.sh' from the Homebrew/brew repository.
+# test_ruby verifies that the specified Ruby executable meets the required version.
 test_ruby() {
   if [[ ! -x "$1" ]]
   then
@@ -419,6 +448,7 @@ test_ruby() {
               Gem::Version.new('${REQUIRED_RUBY_VERSION}')" 2>/dev/null
 }
 
+# test_curl verifies that the specified cURL executable is usable and meets the minimum required version.
 test_curl() {
   if [[ ! -x "$1" ]]
   then
@@ -437,6 +467,7 @@ test_curl() {
   version_ge "$(major_minor "${curl_name_and_version##* }")" "$(major_minor "${REQUIRED_CURL_VERSION}")"
 }
 
+# test_git checks whether the specified Git executable exists, is executable, and meets the required version.
 test_git() {
   if [[ ! -x "$1" ]]
   then
@@ -453,7 +484,7 @@ test_git() {
   fi
 }
 
-# Search for the given executable in PATH (avoids a dependency on the `which` command)
+# which locates the specified executable in PATH without requiring the external `which` command.
 which() {
   # Alias to Bash built-in command `type -P`
   type -P "$@"
@@ -461,7 +492,7 @@ which() {
 
 # Search PATH for the specified program that satisfies Homebrew requirements
 # function which is set above
-# shellcheck disable=SC2230
+# find_tool locates the first executable path for a named tool and writes it to standard output.
 find_tool() {
   if [[ $# -ne 1 ]]
   then
@@ -482,10 +513,12 @@ find_tool() {
   done < <(which -a "$1")
 }
 
+# no_usable_ruby determines whether a usable Ruby interpreter is unavailable.
 no_usable_ruby() {
   [[ -z "$(find_tool ruby)" ]] || ! ruby -e "require 'erb'"
 }
 
+# outdated_glibc determines whether the installed glibc version is older than the required version.
 outdated_glibc() {
   local glibc_version
   glibc_version="$(ldd --version | head -n1 | grep -o '[0-9.]*$' | grep -o '^[0-9]\+\.[0-9]\+')"
