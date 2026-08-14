@@ -13,7 +13,7 @@ export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 export MISE_YES="${MISE_YES:-1}"
 export DINIT_ROOT="${DINIT_ROOT:-$HOME/Documents/Code/dinit}"
 
-# _prepend_path adds a directory to the beginning of PATH when it is not already present.
+# _prepend_path prepends a directory to PATH when it is not already present.
 _prepend_path() {
   case ":$PATH:" in
     *":$1:"*) ;;
