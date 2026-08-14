@@ -1,6 +1,6 @@
 #!/bin/zsh
 # dinit — lazy macOS hydrate for Cursor + modern web + rust.
-# One verb: `dinit` = continue. Subcommands: env, sitrep, clone, purge-python.
+# One verb: `dinit` = continue. Subcommands: auth, env, sitrep, clone, purge-python.
 #
 #   dinit                 resume machine hydrate, or territory ritual when inside dev-master
 #   dinit env             print export PATH=... for this tab
@@ -75,7 +75,7 @@ for arg in "$@"; do
     --*) print -u2 "unknown flag: $arg (try --help)"; exit 2 ;;
     *)
       [[ -z "$arg" ]] && continue
-      print -u2 "unknown: $arg (try: dinit | dinit auth | dinit env | dinit sitrep | dinit clone)"
+      print -u2 "unknown: $arg (try: dinit | dinit auth | dinit env | dinit sitrep | dinit clone | dinit purge-python)"
       exit 2
       ;;
   esac
