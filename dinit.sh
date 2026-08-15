@@ -1,20 +1,26 @@
 #!/bin/zsh
 # dinit — lazy macOS hydrate for Cursor + modern web + rust.
-# One verb: `dinit` = continue. Subcommands: auth, env, sitrep, clone, purge-python.
+# One verb: `dinit` = continue. Subcommands: auth, env, sitrep, clone, purge-python, skip, retry.
 #
 #   dinit                 resume machine hydrate, or territory ritual when inside dev-master
 #   dinit env             print export PATH=... for this tab
 #   dinit sitrep [-v]     compact tool check (verbose with -v)
-#   dinit auth              browser GitHub login + persistent git credentials
-#   dinit clone             auth + ssh key + clone dev-master
+#   dinit auth            browser GitHub login + persistent git credentials
+#   dinit clone           auth + ssh key + clone dev-master
 #   dinit purge-python    pin python 3.14 + purge older
+#   dinit skip <phase>    persist skip for skippable phases (gh, devmaster, shell)
+#   dinit retry <phase>   mark a phase pending for the next resume
 #
 # Opt-outs: --no-casks --no-clone --no-purge-old-python --no-path --no-fix-dns --skip-auth
 
 set -euo pipefail
 
-DINIT_ROOT="${0:A:h}"
-source "${DINIT_ROOT}/lib/state.sh"
+_DINIT_HOME="${0:A:h}"
+: "${DINIT_ROOT:=${_DINIT_HOME}}"
+: "${DINIT_LIB:=${_DINIT_HOME}/lib}"
+: "${DINIT_HOME:=${_DINIT_HOME}}"
+source "${DINIT_LIB}/state.sh"
+source "${DINIT_LIB}/retry.sh"
 
 DINIT_MARK_BEGIN="# >>> dinit >>>"
 DINIT_MARK_END="# <<< dinit <<<"
@@ -46,6 +52,10 @@ PURGE_ONLY=0
 CLONE_ONLY=0
 AUTH_ONLY=0
 RESUME_MODE=1
+SKIP_PHASE_MODE=0
+RETRY_PHASE_MODE=0
+SKIP_TARGET=""
+RETRY_TARGET=""
 
 for arg in "$@"; do
   case "$arg" in
@@ -68,15 +78,23 @@ for arg in "$@"; do
       PURGE_OLD_PYTHON=1
       ;;
     doctor|--doctor|sitrep|--sitrep) DOCTOR=1; RESUME_MODE=0 ;;
+    skip) SKIP_PHASE_MODE=1; RESUME_MODE=0 ;;
+    retry) RETRY_PHASE_MODE=1; RESUME_MODE=0 ;;
     -h|--help)
-      sed -n '2,15p' "$0"
+      sed -n '2,14p' "$0"
       exit 0
       ;;
     --*) print -u2 "unknown flag: $arg (try --help)"; exit 2 ;;
     *)
       [[ -z "$arg" ]] && continue
-      print -u2 "unknown: $arg (try: dinit | dinit auth | dinit env | dinit sitrep | dinit clone | dinit purge-python)"
-      exit 2
+      if [[ "$SKIP_PHASE_MODE" -eq 1 && -z "$SKIP_TARGET" ]]; then
+        SKIP_TARGET="$arg"
+      elif [[ "$RETRY_PHASE_MODE" -eq 1 && -z "$RETRY_TARGET" ]]; then
+        RETRY_TARGET="$arg"
+      else
+        print -u2 "unknown: $arg (try: dinit | dinit auth | dinit env | dinit sitrep | dinit clone | dinit purge-python | dinit skip | dinit retry)"
+        exit 2
+      fi
       ;;
   esac
 done
@@ -113,15 +131,19 @@ fail() {
   write_blocker "${DINIT_CURRENT_PHASE:-unknown}" "$1" "${2:-dinit}"
 }
 
-# run_phase executes a pending hydration phase and marks it successful.
+# run_phase executes a dirty hydration phase. ok/skipped packets are left unchanged. Session phases never persist ok.
 run_phase() {
   local name="$1"
   shift
-  local phase_status
+  local phase_status kind
   phase_status="$(state_phase_status "$name")"
-  [[ "$phase_status" == "ok" ]] && return 0
+  [[ "$phase_status" == "ok" || "$phase_status" == "skipped" ]] && return 0
+  kind="$(state_phase_kind "$name")"
   DINIT_CURRENT_PHASE="$name"
   "$@"
+  [[ "$kind" == "session" ]] && return 0
+  phase_status="$(state_phase_status "$name")"
+  [[ "$phase_status" == "skipped" || "$phase_status" == "blocked" || "$phase_status" == "failed" ]] && return 0
   state_set_phase "$name" "ok"
 }
 
@@ -181,7 +203,7 @@ load_brew() {
 # hydrate_path refreshes the shell environment and executable search path.
 hydrate_path() {
   [[ "$ADD_PATH" -eq 1 ]] || return 0
-  local pathfile="${DINIT_ROOT}/shell/dinit-path.zsh"
+  local pathfile="${DINIT_HOME}/shell/dinit-path.zsh"
   if [[ -f "$pathfile" ]]; then source "$pathfile"
   else load_brew >/dev/null 2>&1 || true; fi
   [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
@@ -197,8 +219,12 @@ print_env() {
   hydrate_path
   print -r -- "export PATH=\"${PATH}\""
   print -r -- "export DINIT_ROOT=\"${DINIT_ROOT}\""
-  [[ -n "${CARGO_HOME:-}" ]] && print -r -- "export CARGO_HOME=\"${CARGO_HOME}\""
-  [[ -n "${MISE_YES:-}" ]] && print -r -- "export MISE_YES=\"${MISE_YES}\""
+  if [[ -n "${CARGO_HOME:-}" ]]; then
+    print -r -- "export CARGO_HOME=\"${CARGO_HOME}\""
+  fi
+  if [[ -n "${MISE_YES:-}" ]]; then
+    print -r -- "export MISE_YES=\"${MISE_YES}\""
+  fi
 }
 
 # stale_path_detect detects a shell session with an outdated executable search path.
@@ -209,7 +235,7 @@ stale_path_detect() {
   fi
   if [[ -x /opt/homebrew/bin/gh || -x /opt/homebrew/bin/brew ]]; then
     print -P "\n%F{yellow}this tab is stale. paste:%f"
-    print -P "eval \"\$(${DINIT_ROOT}/dinit.sh env)\""
+    print -P "eval \"\$(${DINIT_HOME}/dinit.sh env)\""
     return 1
   fi
   return 0
@@ -349,17 +375,44 @@ sitrep_verbose() {
   ping_tool ssh -V
 }
 
+# sitrep_phases prints catalog status for every hydrate phase.
+sitrep_phases() {
+  print -P "\n%F{cyan}hydrate%f"
+  local id kind st retry
+  while IFS=$'\t' read -r id kind st retry; do
+    [[ -z "$id" ]] && continue
+    case "$st" in
+      ok) print -P "  %F{green}ok%f       ${id}  (${kind})" ;;
+      skipped) print -P "  %F{yellow}skipped%f  ${id}  (${kind})" ;;
+      blocked) print -P "  %F{red}blocked%f  ${id}  (${kind})" ;;
+      failed) print -P "  %F{red}failed%f   ${id}  (${kind})" ;;
+      pending)
+        if [[ "$kind" == "session" ]]; then
+          print -P "  %F{cyan}session%f  ${id}"
+        else
+          print -P "  %F{blue}pending%f  ${id}  (${kind})"
+        fi
+        ;;
+      *) print -P "  ${st}  ${id}  (${kind})" ;;
+    esac
+  done < <(state_catalog_table)
+}
+
 # sitrep reports system, tool, hydration, and blocker status.
 sitrep() {
   hydrate_path
   DINIT_SITREP_MISSING=0
   stale_path_detect || DINIT_SITREP_MISSING=1
 
+  local osver
+  osver="$(sw_vers -productVersion 2>/dev/null || uname -s)"
+
   phase "sitrep"
-  info "user=$USER  $(sw_vers -productVersion)  complete=$(state_is_complete)"
+  info "user=$USER  ${osver}  complete=$(state_is_complete)"
 
   sitrep_compact
   [[ "$SITREP_VERBOSE" -eq 1 ]] && sitrep_verbose
+  sitrep_phases
 
   local blocker
   blocker="$(state_get_blocker)"
@@ -375,11 +428,13 @@ sitrep() {
   return $DINIT_SITREP_MISSING
 }
 
-# phase_sudo establishes and maintains the sudo credential cache.
+# phase_sudo establishes a per-process sudo keepalive. This is session state and is never persisted as ok.
 phase_sudo() {
-  phase "sudo (once)"
-  if sudo -n true 2>/dev/null; then ok "sudo warm"
+  phase "sudo (session)"
+  if sudo -n true 2>/dev/null; then
+    ok "sudo warm"
   else
+    need_tty
     info "password once — python shadow + dns may need it"
     sudo -v || write_blocker "sudo" "sudo required for hydrate" "dinit"
   fi
@@ -411,7 +466,10 @@ phase_net() {
       warn "auto-fix skipped (--no-fix-dns)"
     fi
   fi
-  host_resolves github.com && ok "github.com" || warn "github.com unreachable"
+  if ! retry_transient 3 host_resolves github.com; then
+    write_blocker "net" "github.com unreachable" "dinit"
+  fi
+  ok "github.com"
 }
 
 # phase_fix_dns replaces the active network service's DNS servers with public resolvers.
@@ -445,7 +503,7 @@ phase_xcode() {
 # fetch_homebrew_installer obtains a valid Homebrew installer script.
 fetch_homebrew_installer() {
   local dest="$1"
-  local vendored="${DINIT_ROOT}/vendor/homebrew-install.sh"
+  local vendored="${DINIT_HOME}/vendor/homebrew-install.sh"
   if [[ -s "$vendored" ]] && head -n 1 "$vendored" | grep -q '^#!'; then
     cp "$vendored" "$dest"; ok "vendored installer"; return 0
   fi
@@ -478,7 +536,7 @@ phase_brew() {
     }
     NONINTERACTIVE=1 /bin/bash "$installer"
     rm -f "$installer"
-    load_brew || write_blocker "brew" "brew not on PATH after install" "${DINIT_ROOT}/dinit.sh env"
+    load_brew || write_blocker "brew" "brew not on PATH after install" "${DINIT_HOME}/dinit.sh env"
   fi
   export HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
   brew analytics off >/dev/null 2>&1 || true
@@ -490,7 +548,11 @@ phase_brew() {
 phase_bundle() {
   phase "brew bundle"
   load_brew
-  if ! brew bundle install --file="${DINIT_ROOT}/Brewfile" 2>"${SNAPSHOT_DIR}/.brew-bundle.err"; then
+  mkdir -p "$SNAPSHOT_DIR"
+  brew_bundle_once() {
+    brew bundle install --file="${DINIT_HOME}/Brewfile" 2>"${SNAPSHOT_DIR}/.brew-bundle.err"
+  }
+  if ! retry_transient 3 brew_bundle_once; then
     if grep -q 'already locked' "${SNAPSHOT_DIR}/.brew-bundle.err" 2>/dev/null; then
       write_blocker "bundle" "brew lock conflict — wait or kill other brew, then retry" "dinit"
     fi
@@ -507,14 +569,14 @@ phase_bundle() {
 # phase_shell installs managed shell environment and startup hooks.
 phase_shell() {
   phase "shell hooks"
-  local pathsrc="${DINIT_ROOT}/shell/dinit-path.zsh"
-  local src="${DINIT_ROOT}/shell/dinit.zsh"
+  local pathsrc="${DINIT_HOME}/shell/dinit-path.zsh"
+  local src="${DINIT_HOME}/shell/dinit.zsh"
   [[ -f "$pathsrc" && -f "$src" ]] || write_blocker "shell" "missing shell/*.zsh" "dinit"
 
   if [[ "$ADD_PATH" -eq 1 ]]; then
-    local pathsrc="${DINIT_ROOT}/shell/dinit-path.zsh"
-    local pathsh="${DINIT_ROOT}/shell/dinit-path.sh"
-    local src="${DINIT_ROOT}/shell/dinit.zsh"
+    local pathsrc="${DINIT_HOME}/shell/dinit-path.zsh"
+    local pathsh="${DINIT_HOME}/shell/dinit-path.sh"
+    local src="${DINIT_HOME}/shell/dinit.zsh"
     inject_managed_block "$ZSHENV" "export DINIT_ROOT=\"${DINIT_ROOT}\""$'\n'"[ -f \"$pathsrc\" ] && source \"$pathsrc\""
     inject_managed_block "$ZPROFILE" "export DINIT_ROOT=\"${DINIT_ROOT}\""$'\n'"[ -f \"$pathsrc\" ] && source \"$pathsrc\""
     inject_managed_block "$ZSHRC" "export DINIT_ROOT=\"${DINIT_ROOT}\""$'\n'"[ -f \"$src\" ] && source \"$src\""
@@ -522,6 +584,8 @@ phase_shell() {
     ok "zshenv/zprofile/zshrc/profile hooks"
   else
     warn "PATH hooks skipped (--no-path)"
+    state_set_phase shell skipped "PATH hooks skipped (--no-path)" "dinit"
+    return 0
   fi
   hydrate_path
 }
@@ -546,9 +610,9 @@ phase_git_defaults() {
 
   if [[ -z "$(git config --global user.name || true)" ]]; then
     local name
-    print -n "  git user.name [greyZ]: "
+    print -n "  git user.name [${USER}]: "
     read -r name
-    git config --global user.name "${name:-greyZ}"
+    git config --global user.name "${name:-$USER}"
   fi
   if [[ -z "$(git config --global user.email || true)" ]]; then
     local email
@@ -566,8 +630,8 @@ phase_ssh() {
   local key="$HOME/.ssh/id_ed25519"
   [[ -f "$key" ]] || ssh-keygen -t ed25519 -C "${USER}@$(hostname -s)" -f "$key" -N ""
   ok "$key"
-  if [[ ! -f "$HOME/.ssh/config" ]]; then
-    cat > "$HOME/.ssh/config" <<'EOF'
+  if ! grep -q 'github.com' "$HOME/.ssh/config" 2>/dev/null; then
+    inject_managed_block "$HOME/.ssh/config" "$(cat <<'EOF'
 Host github.com
   HostName github.com
   User git
@@ -576,7 +640,9 @@ Host github.com
   AddKeysToAgent yes
   UseKeychain yes
 EOF
+)"
     chmod 600 "$HOME/.ssh/config"
+    ok "ssh config github.com host"
   fi
   ssh-add --apple-use-keychain "$key" 2>/dev/null || ssh-add "$key" 2>/dev/null || true
 }
@@ -757,7 +823,12 @@ github_auth_browser() {
 
 # phase_gh performs GitHub authentication unless authentication was skipped.
 phase_gh() {
-  [[ "$SKIP_AUTH" -eq 1 ]] && { warn "gh auth skipped"; return 0; }
+  if [[ "$SKIP_AUTH" -eq 1 ]]; then
+    warn "gh auth skipped"
+    state_set_phase gh skipped "auth skipped (--skip-auth)" "dinit auth"
+    return 0
+  fi
+  need_tty
   github_auth_browser
 }
 
@@ -792,7 +863,11 @@ configure_devmaster_git() {
 # phase_devmaster clones or updates the dev-master repository.
 phase_devmaster() {
   phase "clone dev-master"
-  [[ "$CLONE_REPO" -eq 1 ]] || { warn "clone skipped (--no-clone)"; return 0; }
+  if [[ "$CLONE_REPO" -ne 1 ]]; then
+    warn "clone skipped (--no-clone)"
+    state_set_phase devmaster skipped "clone skipped (--no-clone)" "dinit clone"
+    return 0
+  fi
 
   if [[ -d "$DEVMASTER_DIR/.git" ]]; then
     ok "already cloned"
@@ -820,48 +895,33 @@ write_snapshot() {
   stamp="$(date +%Y%m%dT%H%M%S)"
   snap="${SNAPSHOT_DIR}/${stamp}-state.json"
   latest="${SNAPSHOT_DIR}/latest.json"
-  cp "$(state_file)" "$snap" 2>/dev/null || true
+  cp "$(state_file)" "$snap" || return 1
   ln -sfn "$(basename "$snap")" "$latest" 2>/dev/null || true
   ok "state → $snap"
 }
 
-# resume_hydrate resumes hydration from the first incomplete phase.
+# resume_hydrate resumes hydration from the first incomplete required/human phase.
 resume_hydrate() {
-  need_tty
   local start
   start="$(state_first_pending)"
   [[ -z "$start" ]] && { sitrep; return 0; }
 
   info "resuming from phase: $start"
+  phase_sudo
 
-  local -a order=(
-    preflight sudo net xcode brew bundle shell git_defaults ssh runtimes gh devmaster snapshot
-  )
-  local p run=0
-  for p in $order; do
-    [[ "$run" -eq 1 || "$p" == "$start" ]] && run=1
-    [[ "$run" -eq 0 ]] && continue
-    case "$p" in
-      preflight) run_phase preflight phase_preflight ;;
-      sudo)      run_phase sudo phase_sudo ;;
-      net)       run_phase net phase_net ;;
-      xcode)     run_phase xcode phase_xcode ;;
-      brew)      run_phase brew phase_brew ;;
-      bundle)    run_phase bundle phase_bundle ;;
-      shell)     run_phase shell phase_shell ;;
-      git_defaults) run_phase git_defaults phase_git_defaults ;;
-      ssh)       run_phase ssh phase_ssh ;;
-      runtimes)  run_phase runtimes phase_runtimes ;;
-      gh)        run_phase gh phase_gh ;;
-      devmaster) run_phase devmaster phase_devmaster ;;
-      snapshot)  run_phase snapshot write_snapshot ;;
-    esac
-  done
+  local p apply kind
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    kind="$(state_phase_kind "$p")"
+    [[ "$kind" == "session" ]] && continue
+    apply="$(state_phase_apply "$p")"
+    run_phase "$p" "$apply"
+  done < <(state_phase_ids)
 
   sitrep || true
   if [[ "$(state_is_complete)" == "true" ]]; then
     print -P "\n%F{green}hydrate complete.%f"
-    print -P "this tab:  eval \"\$(${DINIT_ROOT}/dinit.sh env)\""
+    print -P "this tab:  eval \"\$(${DINIT_HOME}/dinit.sh env)\""
     maybe_handoff_territory
   fi
 }
@@ -918,6 +978,22 @@ main() {
     exit 0
   fi
 
+  if [[ "$SKIP_PHASE_MODE" -eq 1 ]]; then
+    [[ -n "$SKIP_TARGET" ]] || { print -u2 "usage: dinit skip <phase>"; exit 2; }
+    state_skip_phase "$SKIP_TARGET" "skipped by dinit skip" "dinit retry ${SKIP_TARGET}"
+    ok "skipped $SKIP_TARGET"
+    sitrep || true
+    exit 0
+  fi
+
+  if [[ "$RETRY_PHASE_MODE" -eq 1 ]]; then
+    [[ -n "$RETRY_TARGET" ]] || { print -u2 "usage: dinit retry <phase>"; exit 2; }
+    state_reset_phase "$RETRY_TARGET"
+    info "reset $RETRY_TARGET → pending"
+    print -P "%F{cyan}next:%f dinit"
+    exit 0
+  fi
+
   if [[ "$PURGE_ONLY" -eq 1 ]]; then
     need_tty
     hydrate_path
@@ -949,7 +1025,7 @@ main() {
     phase_devmaster
     [[ -d "$DEVMASTER_DIR/.git" ]] && state_set_phase devmaster ok
     gh auth status >/dev/null 2>&1 && state_set_phase gh ok
-    write_snapshot 2>/dev/null || state_set_phase snapshot ok
+    write_snapshot && state_set_phase snapshot ok
     sitrep || true
     if [[ -d "$DEVMASTER_DIR/.git" ]]; then
       maybe_handoff_territory || true

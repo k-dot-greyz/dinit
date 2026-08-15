@@ -1,0 +1,109 @@
+{
+  "schema": "dinit.catalog.v1",
+  "phases": [
+    {
+      "id": "preflight",
+      "kind": "required",
+      "skippable": false,
+      "retry": "none",
+      "apply": "phase_preflight",
+      "needs": []
+    },
+    {
+      "id": "sudo",
+      "kind": "session",
+      "skippable": false,
+      "retry": "none",
+      "apply": "phase_sudo",
+      "needs": ["tty"]
+    },
+    {
+      "id": "net",
+      "kind": "required",
+      "skippable": false,
+      "retry": "transient",
+      "apply": "phase_net",
+      "needs": ["net"]
+    },
+    {
+      "id": "xcode",
+      "kind": "human",
+      "skippable": false,
+      "retry": "none",
+      "apply": "phase_xcode",
+      "needs": ["tty"]
+    },
+    {
+      "id": "brew",
+      "kind": "required",
+      "skippable": false,
+      "retry": "transient",
+      "apply": "phase_brew",
+      "needs": ["net", "tty"]
+    },
+    {
+      "id": "bundle",
+      "kind": "required",
+      "skippable": false,
+      "retry": "transient",
+      "apply": "phase_bundle",
+      "needs": ["brew", "net", "tty"]
+    },
+    {
+      "id": "shell",
+      "kind": "required",
+      "skippable": true,
+      "retry": "none",
+      "apply": "phase_shell",
+      "needs": []
+    },
+    {
+      "id": "git_defaults",
+      "kind": "required",
+      "skippable": false,
+      "retry": "none",
+      "apply": "phase_git_defaults",
+      "needs": []
+    },
+    {
+      "id": "ssh",
+      "kind": "required",
+      "skippable": false,
+      "retry": "none",
+      "apply": "phase_ssh",
+      "needs": []
+    },
+    {
+      "id": "runtimes",
+      "kind": "required",
+      "skippable": false,
+      "retry": "transient",
+      "apply": "phase_runtimes",
+      "needs": ["brew", "net"]
+    },
+    {
+      "id": "gh",
+      "kind": "human",
+      "skippable": true,
+      "retry": "none",
+      "apply": "phase_gh",
+      "needs": ["tty", "net"]
+    },
+    {
+      "id": "devmaster",
+      "kind": "required",
+      "skippable": true,
+      "retry": "none",
+      "apply": "phase_devmaster",
+      "needs": ["gh"]
+    },
+    {
+      "id": "snapshot",
+      "kind": "required",
+      "skippable": false,
+      "retry": "none",
+      "apply": "write_snapshot",
+      "needs": []
+    }
+  ]
+}

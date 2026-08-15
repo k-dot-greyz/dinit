@@ -18,10 +18,11 @@ print() {
 }
 
 DINIT_ROOT="$TMP/dinit"
+DINIT_LIB="$ROOT/lib"
 ZSHRC="$TMP/.zshrc"
 DEVMASTER_DIR="$TMP/dev-master"
 PYTHON_PIN="3.14"
-export DINIT_ROOT ZSHRC DEVMASTER_DIR PYTHON_PIN
+export DINIT_ROOT DINIT_LIB ZSHRC DEVMASTER_DIR PYTHON_PIN
 
 mkdir -p "$DINIT_ROOT" "$TMP/snapshots" "$TMP/Code"
 # shellcheck source=/dev/null
