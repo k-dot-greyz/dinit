@@ -906,6 +906,7 @@ resume_hydrate() {
   start="$(state_first_pending)"
   [[ -z "$start" ]] && { sitrep; return 0; }
 
+  need_tty
   info "resuming from phase: $start"
   phase_sudo
 
@@ -942,6 +943,7 @@ should_run_territory() {
 
 # run_territory_ritual executes the dev-master repository's setup ritual.
 run_territory_ritual() {
+  need_tty
   local ritual="${DEVMASTER_DIR}/dinit.sh"
   [[ -f "$ritual" ]] || {
     warn "territory dinit missing at $ritual"
