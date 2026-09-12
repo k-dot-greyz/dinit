@@ -20,3 +20,4 @@ jobs:
           ./tests/test_state_algebra.sh
           ./tests/test_retry.sh
           ./tests/test_arg_parsing.sh
+          ./tests/test_tty_gate.sh
